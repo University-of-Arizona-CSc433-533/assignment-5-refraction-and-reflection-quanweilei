@@ -1,7 +1,7 @@
 Template code for A04
 ------------
 
-Author: Your name [youremail@email.arizona.edu]
+Author: Quanwei Lei quanweilei@arizona.edu
 Date: April 15, 2023
 
 **PLEASE UPDATE THIS README**
@@ -10,6 +10,11 @@ Date: April 15, 2023
 Included files:
 * materials/ -- a folder with one image in 2^n format and one scene with one billboard.
 * ./ -- required scripts for rendering
+* a06.js -- code used for animating waves
+* m4.js -- used for vector math
+* png.js -- used for parsing png given
+* index.html -- file to run
+* webgl-utils.js -- utilities
 
 
 PLEASE PROVIDE ANY ATTRIBUTION HERE**

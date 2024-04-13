@@ -39,6 +39,9 @@ var waterHeight=0.5;
 
 var wh = document.getElementById('whID');//Slider for water height
 
+let timeTriggered = 0;
+let triggered = false;
+
 wh.addEventListener("input", function(evt) {
 	if(doneLoading==true){
 		waterHeight=Number(wh.value);
@@ -47,6 +50,16 @@ wh.addEventListener("input", function(evt) {
 		wh.label = "Water height: "+wh.value;//refresh wh text
 	}
 },false);
+
+// on key click d we trigger the time uniform
+document.addEventListener('keydown', function(event) {
+	if (event.key === 'd') {
+		if(doneLoading==true){
+			triggered = true;
+			timeTriggered = performance.now();
+		}
+	}
+});
 
 function readScene()//This is the function that is called after user selects multiple files of images and scenes
 {
@@ -185,9 +198,27 @@ function renderingFcn(now){
 	
 	// Clear the canvas AND the depth buffer.
     gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
-	
+	wave(now);
 	renderBillboard(now);
 }
+
+function wave(now){
+	if(triggered){
+		// time elapse
+		let timeSinceDrop = (now - timeTriggered) / 1000;
+
+		// set the time uniform
+		gl.useProgram(billboardProgram.program);
+		gl.uniform1f(billboardProgram.timeSinceDropUniformLocation, timeSinceDrop);
+
+		// let it run for 2 seconds
+		if (timeSinceDrop > 2) {
+			timeTriggered = 0;
+			triggered = false;
+		}
+	}
+}
+
 
 function renderBillboard(now){
 	gl.disable(gl.CULL_FACE);
@@ -266,6 +297,15 @@ function renderBillboard(now){
 	
 	//TODO: You need to send "time" and "water height" to the shader program
 	// You can eaither use the uniform location here or you can use your preprocessed uniform location in the program.
+	// set the wave amplitude uniform
+	gl.uniform1f(billboardProgram.waveAmplitudeUniformLocation, 0.1);
+	// set the wave length uniform
+	gl.uniform1f(billboardProgram.waveLengthUniformLocation, 1.0);
+	// set the wave speed uniform
+	gl.uniform1f(billboardProgram.waveSpeedUniformLocation, 1.0);
+
+	// set the water height uniform
+	gl.uniform1f(billboardProgram.waterHeightUniformLocation, waterHeight);
 	
 	gl.drawArrays(gl.TRIANGLES, 0, 6);
 }
@@ -314,7 +354,7 @@ function makeBillboardBuffers(){
 }
 
 class BillboardProgram{
-	constructor(program,positionLocationAttrib,normalLocationAttrib,textureLocationAttrib,textureUniformLocation,worldViewProjectionUniformLocation,lightDirectionUniformLocation){
+	constructor(program,positionLocationAttrib,normalLocationAttrib,textureLocationAttrib,textureUniformLocation,worldViewProjectionUniformLocation,lightDirectionUniformLocation,timeSinceDropUniformLocation,waveAmplitudeUniformLocation,waveLengthUniformLocation,waveSpeedUniformLocation,waterHeightUniformLocation){
 		this.program=program;
 		this.positionLocationAttrib=positionLocationAttrib;
 		this.normalLocationAttrib=normalLocationAttrib;
@@ -322,6 +362,11 @@ class BillboardProgram{
 		this.textureUniformLocation=textureUniformLocation;
 		this.worldViewProjectionUniformLocation=worldViewProjectionUniformLocation;
 		this.lightDirectionUniformLocation=lightDirectionUniformLocation;
+		this.timeSinceDropUniformLocation=timeSinceDropUniformLocation;
+		this.waveAmplitudeUniformLocation=waveAmplitudeUniformLocation;
+		this.waveLengthUniformLocation=waveLengthUniformLocation;
+		this.waveSpeedUniformLocation=waveSpeedUniformLocation;
+		this.waterHeightUniformLocation=waterHeightUniformLocation;
 	}
 }
 
@@ -331,28 +376,64 @@ function programBillboard(){
 	// Additionally you need to implement light intensity logic which follows the Snell's law.
 	// You can check if the displaced texture coordinate is outside [0,1] and make the fragments invisible (shows background)
 	// The waves should follow sin and cosin functions in x and z directions. The frequency depends on the time scale passes to the shader program.
-	var vShaderObj = "attribute vec4 a_position;\n"+
-				"attribute vec3 a_normal;\n"+
-				"attribute vec2 a_texcoord;\n"+
-				"varying vec2 v_texcoord;\n"+
-				"varying vec3 v_normal;\n"+
-				"uniform mat4 u_worldViewProjection;\n"+
-				"void main() {\n"+
-					"// Sending the interpolated normal to the fragment shader.\n"+
-					"v_normal = a_normal;\n"+
-					"// Pass the texcoord to the fragment shader.\n"+
-					"v_texcoord = a_texcoord;\n"+
-					"// Multiply the position by the matrix.\n"+
-					"gl_Position = u_worldViewProjection * a_position;\n"+
-				"}";
-	var fShaderObj = 	"precision mediump float;\n"+
-					"varying vec3 v_normal;\n"+
-					"varying vec2 v_texcoord;\n"+
-					"uniform vec3 u_lightDirection;\n"+
-					"uniform sampler2D u_texture;\n"+
-					"void main() {\n"+
-						"gl_FragColor = texture2D(u_texture, v_texcoord);\n"+
-					"}";
+	var vShaderObj = `
+		attribute vec3 a_position;
+		attribute vec3 a_normal;
+		attribute vec2 a_texcoord;
+		uniform mat4 u_worldViewProjection;
+		varying vec2 v_texcoord;
+		varying vec3 v_normal;
+
+		void main() {
+			v_texcoord = a_texcoord;
+			v_normal = a_normal;
+			gl_Position = u_worldViewProjection * vec4(a_position, 1.0);
+		}
+		`;
+
+	var fShaderObj = `
+		precision mediump float;
+		varying vec2 v_texcoord;
+		varying vec3 v_normal;
+		uniform sampler2D u_texture;
+		uniform float u_timeSinceDrop;
+		uniform float u_waveAmplitude;
+		uniform float u_waveLength;
+		uniform float u_waveSpeed;
+		uniform float u_waterHeight;
+		uniform vec3 u_lightDirection;
+		const float PI = 3.141592653589793;
+		
+		void main() {
+			vec2 center = vec2(0.5, 0.5);
+			vec2 pos = v_texcoord - center;
+			float distanceFromCenter = length(pos);
+		
+			float wavePhase = (u_timeSinceDrop * u_waveSpeed - distanceFromCenter) / u_waveLength;
+			float waveHeight = u_waterHeight + u_waveAmplitude * sin(2.0 * PI * wavePhase);
+
+			float dx = (u_waveAmplitude / u_waveLength) * cos(2.0 * PI * wavePhase);
+			vec3 normal = normalize(vec3(-dx, 0.0, 1.0));
+
+		
+			// Snell's law for refraction
+			vec3 incidentRay = vec3(0.0, 0.0, -1.0);
+			float cosThetaI = dot(normal, -incidentRay);
+			float sinThetaI = sqrt(1.0 - cosThetaI * cosThetaI);
+			float refractiveIndexAir = 1.0;
+			float refractiveIndexWater = 1.5;
+			float sinThetaT = (sinThetaI * refractiveIndexAir) / refractiveIndexWater;
+			float cosThetaT = sqrt(1.0 - min(1.0, sinThetaT * sinThetaT));
+		
+			vec3 refractedRay = normalize((refractiveIndexAir / refractiveIndexWater) * -incidentRay +
+										  (refractiveIndexAir / refractiveIndexWater * cosThetaI - cosThetaT) * normal);
+			vec2 refractedTexcoord = v_texcoord + refractedRay.xy * waveHeight;
+		
+			vec4 textureColor = texture2D(u_texture, clamp(refractedTexcoord, 0.0, 1.0));
+			gl_FragColor = textureColor;
+		}
+		`;
+		
 	programBill = webglUtils.createProgramFromSources(gl, [vShaderObj,fShaderObj])
 	
 	// look up where the vertex data needs to go.
@@ -365,9 +446,15 @@ function programBillboard(){
     textureUniformLocation = gl.getUniformLocation(programBill, "u_texture");
 	worldViewProjectionUniformLocation = gl.getUniformLocation(programBill, "u_worldViewProjection");
 	lightDirectionUniformLocation = gl.getUniformLocation(programBill, "u_lightDirection");
+	// grab the needed uniforms
+	timeSinceDropUniformLocation = gl.getUniformLocation(programBill, "u_timeSinceDrop");
+	waveAmplitudeUniformLocation = gl.getUniformLocation(programBill, "u_waveAmplitude");
+	waveLengthUniformLocation = gl.getUniformLocation(programBill, "u_waveLength");
+	waveSpeedUniformLocation = gl.getUniformLocation(programBill, "u_waveSpeed");
+	waterHeightUniformLocation = gl.getUniformLocation(programBill, "u_waterHeight");
 	
 	//Optional TODO: You can preprocess required Uniforms to avoid searching for uniforms when rendering.
-	billboardProgram=new BillboardProgram(programBill,positionLocationAttrib,normalLocationAttrib,textureLocationAttrib,textureUniformLocation,worldViewProjectionUniformLocation,lightDirectionUniformLocation);
+	billboardProgram=new BillboardProgram(programBill,positionLocationAttrib,normalLocationAttrib,textureLocationAttrib,textureUniformLocation,worldViewProjectionUniformLocation,lightDirectionUniformLocation,timeSinceDropUniformLocation,waveAmplitudeUniformLocation,waveLengthUniformLocation,waveSpeedUniformLocation,waterHeightUniformLocation);
 }
 
 //The function for parsing PNG is done for you. The output is a an array of RGBA instances.
